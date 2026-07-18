@@ -1,6 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  type PointerEvent,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 type PetMood = "happy" | "calm" | "sad" | "worried";
 
@@ -114,12 +121,14 @@ export default function Home() {
   const [sendError, setSendError] = useState("");
   const [comfortLevel, setComfortLevel] = useState(0);
   const [petNotice, setPetNotice] = useState("摸摸它，或者喂它一点甜甜的东西。");
+  const [petPosition, setPetPosition] = useState({ x: 34, y: 56 });
   const [callState, setCallState] = useState<"idle" | "ringing" | "live">(
     "idle",
   );
   const [muted, setMuted] = useState(false);
   const [cameraOff, setCameraOff] = useState(false);
   const clientId = useRef("");
+  const dragOffset = useRef({ x: 0, y: 0 });
 
   useEffect(() => {
     clientId.current = getClientId();
@@ -155,6 +164,29 @@ export default function Home() {
   function feedPet() {
     setComfortLevel((level) => Math.min(level + 3, 8));
     setPetNotice("小冰人吃到了一口冰糖，开心地眯起眼睛。");
+  }
+
+  function startPetDrag(event: PointerEvent<HTMLButtonElement>) {
+    const rect = event.currentTarget.getBoundingClientRect();
+    dragOffset.current = {
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function dragPet(event: PointerEvent<HTMLButtonElement>) {
+    if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+
+    const nextX = event.clientX - dragOffset.current.x;
+    const nextY = event.clientY - dragOffset.current.y;
+    const maxX = Math.max(window.innerWidth - 170, 8);
+    const maxY = Math.max(window.innerHeight - 210, 8);
+
+    setPetPosition({
+      x: Math.min(Math.max(nextX, 8), maxX),
+      y: Math.min(Math.max(nextY, 8), maxY),
+    });
   }
 
   async function postMessage(message: Omit<Message, "id" | "time">) {
@@ -221,33 +253,6 @@ export default function Home() {
             <div className="orbit one" />
             <div className="orbit two" />
             <span>2</span>
-          </div>
-        </div>
-
-        <div className={`pet-panel mood-${petMood}`} aria-label="小冰人宠物">
-          <div className="pet-stage">
-            <button className="pet-body" onClick={petTouch} aria-label="摸摸小冰人">
-              <span className="pet-shine" />
-              <span className="pet-face" data-face={petCopy.face}>
-                <i />
-                <i />
-                <b />
-              </span>
-              <span className="pet-tear left" />
-              <span className="pet-tear right" />
-            </button>
-            <div className="pet-shadow" />
-          </div>
-          <div className="pet-info">
-            <div>
-              <strong>{petCopy.status}</strong>
-              <small>{petCopy.whisper}</small>
-            </div>
-            <p>{petNotice}</p>
-            <div className="pet-actions">
-              <button onClick={petTouch}>摸摸</button>
-              <button onClick={feedPet}>喂冰糖</button>
-            </div>
           </div>
         </div>
 
@@ -372,6 +377,60 @@ export default function Home() {
           {sendError && <p className="send-error" role="alert">{sendError}</p>}
         </div>
       </section>
+
+      <aside
+        className={`floating-pet mood-${petMood}`}
+        style={{
+          "--pet-x": `${petPosition.x}px`,
+          "--pet-y": `${petPosition.y}px`,
+        } as CSSProperties}
+        aria-label="可以拖动的小冰人"
+      >
+        <div className="snow-field" aria-hidden="true">
+          <span />
+          <span />
+          <span />
+          <span />
+          <span />
+          <span />
+        </div>
+        <button
+          className="pet-body"
+          onClick={petTouch}
+          onPointerDown={startPetDrag}
+          onPointerMove={dragPet}
+          aria-label="拖动或摸摸小冰人"
+        >
+          <span className="orange-leaf" />
+          <span className="orange-dimple" />
+          <span className="pet-shine" />
+          <span className="pet-brows">
+            <i />
+            <i />
+          </span>
+          <span className="pet-face" data-face={petCopy.face}>
+            <i />
+            <i />
+            <b />
+          </span>
+          <span className="blue-scarf">
+            <i />
+            <b />
+          </span>
+          <span className="pet-tear left" />
+          <span className="pet-tear right" />
+        </button>
+        <div className="pet-shadow" />
+        <div className="pet-info">
+          <strong>{petCopy.status}</strong>
+          <small>{petCopy.whisper}</small>
+          <p>{petNotice}</p>
+          <div className="pet-actions">
+            <button onClick={petTouch}>摸摸</button>
+            <button onClick={feedPet}>喂橙子糖</button>
+          </div>
+        </div>
+      </aside>
     </main>
   );
 }
