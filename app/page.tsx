@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
+type PetMood = "happy" | "calm" | "sad" | "worried";
+
 type Message = {
   id: number;
   authorId: string;
@@ -39,11 +41,79 @@ function getApiBase() {
   return "/api";
 }
 
+const happyWords = [
+  "爱",
+  "喜欢",
+  "开心",
+  "哈哈",
+  "想你",
+  "抱抱",
+  "宝贝",
+  "谢谢",
+  "好呀",
+  "晚安",
+];
+
+const sadWords = ["难过", "哭", "委屈", "累", "不开心", "失望", "想哭"];
+
+const fightWords = [
+  "吵架",
+  "生气",
+  "讨厌",
+  "烦",
+  "滚",
+  "别理我",
+  "分手",
+  "冷战",
+  "算了",
+];
+
+function detectMood(messages: Message[], comfortLevel: number): PetMood {
+  const recentText = messages
+    .slice(-8)
+    .map((message) => message.body)
+    .join(" ");
+  const text = recentText.toLowerCase();
+  const hasFight = fightWords.some((word) => text.includes(word));
+  const hasSad = sadWords.some((word) => text.includes(word));
+  const hasHappy = happyWords.some((word) => text.includes(word));
+
+  if (hasFight && comfortLevel < 2) return "worried";
+  if ((hasFight || hasSad) && comfortLevel < 4) return "sad";
+  if (hasHappy || comfortLevel > 4) return "happy";
+  return "calm";
+}
+
+const petMoodCopy: Record<PetMood, { face: string; status: string; whisper: string }> = {
+  happy: {
+    face: "smile",
+    status: "小冰人在笑",
+    whisper: "你们的气氛暖暖的，它在旁边晃脚。",
+  },
+  calm: {
+    face: "calm",
+    status: "小冰人陪着你们",
+    whisper: "它安静坐着，听你们慢慢说。",
+  },
+  sad: {
+    face: "sad",
+    status: "小冰人有点想哭",
+    whisper: "它感觉到有人难过，想被轻轻摸一下。",
+  },
+  worried: {
+    face: "cry",
+    status: "小冰人哭了",
+    whisper: "它听见吵架的味道了，正抱着小碗等你们和好。",
+  },
+};
+
 export default function Home() {
   const [messages, setMessages] = useState<Message[]>(firstMessages);
   const [draft, setDraft] = useState("");
   const [connected, setConnected] = useState(false);
   const [sendError, setSendError] = useState("");
+  const [comfortLevel, setComfortLevel] = useState(0);
+  const [petNotice, setPetNotice] = useState("摸摸它，或者喂它一点甜甜的东西。");
   const [callState, setCallState] = useState<"idle" | "ringing" | "live">(
     "idle",
   );
@@ -70,6 +140,22 @@ export default function Home() {
     if (callState === "ringing") return "正在等待对方接听";
     return connected ? "局域网已连接" : "等待局域网连接";
   }, [callState, connected]);
+
+  const petMood = useMemo(
+    () => detectMood(messages, comfortLevel),
+    [messages, comfortLevel],
+  );
+  const petCopy = petMoodCopy[petMood];
+
+  function petTouch() {
+    setComfortLevel((level) => Math.min(level + 2, 8));
+    setPetNotice("小冰人被摸摸了，脸颊变得亮晶晶。");
+  }
+
+  function feedPet() {
+    setComfortLevel((level) => Math.min(level + 3, 8));
+    setPetNotice("小冰人吃到了一口冰糖，开心地眯起眼睛。");
+  }
 
   async function postMessage(message: Omit<Message, "id" | "time">) {
     const response = await fetch(`${getApiBase()}/messages`, {
@@ -135,6 +221,33 @@ export default function Home() {
             <div className="orbit one" />
             <div className="orbit two" />
             <span>2</span>
+          </div>
+        </div>
+
+        <div className={`pet-panel mood-${petMood}`} aria-label="小冰人宠物">
+          <div className="pet-stage">
+            <button className="pet-body" onClick={petTouch} aria-label="摸摸小冰人">
+              <span className="pet-shine" />
+              <span className="pet-face" data-face={petCopy.face}>
+                <i />
+                <i />
+                <b />
+              </span>
+              <span className="pet-tear left" />
+              <span className="pet-tear right" />
+            </button>
+            <div className="pet-shadow" />
+          </div>
+          <div className="pet-info">
+            <div>
+              <strong>{petCopy.status}</strong>
+              <small>{petCopy.whisper}</small>
+            </div>
+            <p>{petNotice}</p>
+            <div className="pet-actions">
+              <button onClick={petTouch}>摸摸</button>
+              <button onClick={feedPet}>喂冰糖</button>
+            </div>
           </div>
         </div>
 
