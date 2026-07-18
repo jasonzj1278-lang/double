@@ -10,6 +10,8 @@ import {
 } from "react";
 
 type PetMood = "happy" | "calm" | "sad" | "worried";
+type PetReaction = "idle" | "shy" | "feed";
+type PetFood = "candy" | "fruit" | "meat" | "vegetable";
 
 type Message = {
   id: number;
@@ -120,8 +122,9 @@ export default function Home() {
   const [connected, setConnected] = useState(false);
   const [sendError, setSendError] = useState("");
   const [comfortLevel, setComfortLevel] = useState(0);
-  const [petNotice, setPetNotice] = useState("摸摸它，或者喂它一点甜甜的东西。");
   const [petPosition, setPetPosition] = useState({ x: 34, y: 56 });
+  const [petMenuOpen, setPetMenuOpen] = useState(false);
+  const [petReaction, setPetReaction] = useState<PetReaction>("idle");
   const [callState, setCallState] = useState<"idle" | "ringing" | "live">(
     "idle",
   );
@@ -129,6 +132,9 @@ export default function Home() {
   const [cameraOff, setCameraOff] = useState(false);
   const clientId = useRef("");
   const dragOffset = useRef({ x: 0, y: 0 });
+  const dragStart = useRef({ x: 0, y: 0 });
+  const petWasDragged = useRef(false);
+  const reactionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     clientId.current = getClientId();
@@ -141,7 +147,10 @@ export default function Home() {
       setMessages(nextMessages);
     };
 
-    return () => events.close();
+    return () => {
+      events.close();
+      if (reactionTimer.current) clearTimeout(reactionTimer.current);
+    };
   }, []);
 
   const statusText = useMemo(() => {
@@ -156,14 +165,22 @@ export default function Home() {
   );
   const petCopy = petMoodCopy[petMood];
 
-  function petTouch() {
-    setComfortLevel((level) => Math.min(level + 2, 8));
-    setPetNotice("小冰人被摸摸了，脸颊变得亮晶晶。");
+  function runPetReaction(reaction: PetReaction, duration = 1500) {
+    if (reactionTimer.current) clearTimeout(reactionTimer.current);
+    setPetReaction(reaction);
+    reactionTimer.current = setTimeout(() => setPetReaction("idle"), duration);
   }
 
-  function feedPet() {
-    setComfortLevel((level) => Math.min(level + 3, 8));
-    setPetNotice("小冰人吃到了一口冰糖，开心地眯起眼睛。");
+  function petTouch() {
+    setComfortLevel((level) => Math.min(level + 2, 8));
+    runPetReaction("shy");
+    setPetMenuOpen(false);
+  }
+
+  function feedPet(food: PetFood) {
+    setComfortLevel((level) => Math.min(level + (food === "candy" ? 3 : 2), 8));
+    runPetReaction("feed", 3600);
+    setPetMenuOpen(false);
   }
 
   function startPetDrag(event: PointerEvent<HTMLButtonElement>) {
@@ -172,11 +189,22 @@ export default function Home() {
       x: event.clientX - rect.left,
       y: event.clientY - rect.top,
     };
+    dragStart.current = { x: event.clientX, y: event.clientY };
+    petWasDragged.current = false;
     event.currentTarget.setPointerCapture(event.pointerId);
   }
 
   function dragPet(event: PointerEvent<HTMLButtonElement>) {
     if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+
+    if (
+      Math.hypot(
+        event.clientX - dragStart.current.x,
+        event.clientY - dragStart.current.y,
+      ) > 5
+    ) {
+      petWasDragged.current = true;
+    }
 
     const nextX = event.clientX - dragOffset.current.x;
     const nextY = event.clientY - dragOffset.current.y;
@@ -187,6 +215,13 @@ export default function Home() {
       x: Math.min(Math.max(nextX, 8), maxX),
       y: Math.min(Math.max(nextY, 8), maxY),
     });
+  }
+
+  function finishPetInteraction(event: PointerEvent<HTMLButtonElement>) {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    if (!petWasDragged.current) setPetMenuOpen((open) => !open);
   }
 
   async function postMessage(message: Omit<Message, "id" | "time">) {
@@ -379,7 +414,7 @@ export default function Home() {
       </section>
 
       <aside
-        className={`floating-pet mood-${petMood}`}
+        className={`floating-pet mood-${petMood} reaction-${petReaction} ${petMenuOpen ? "menu-open" : ""}`}
         style={{
           "--pet-x": `${petPosition.x}px`,
           "--pet-y": `${petPosition.y}px`,
@@ -396,14 +431,21 @@ export default function Home() {
         </div>
         <button
           className="pet-body"
-          onClick={petTouch}
           onPointerDown={startPetDrag}
           onPointerMove={dragPet}
-          aria-label="拖动或摸摸小冰人"
+          onPointerUp={finishPetInteraction}
+          aria-label="拖动小冰人，轻点打开互动命令"
+          aria-expanded={petMenuOpen}
         >
           <span className="orange-leaf" />
+          <span className="orange-crown" />
           <span className="orange-dimple" />
           <span className="pet-shine" />
+          <span className="pet-face-window" />
+          <span className="pet-arm left" />
+          <span className="pet-arm right" />
+          <span className="pet-leg left" />
+          <span className="pet-leg right" />
           <span className="pet-brows">
             <i />
             <i />
@@ -419,17 +461,25 @@ export default function Home() {
           </span>
           <span className="pet-tear left" />
           <span className="pet-tear right" />
+          <span className="pet-blush left" />
+          <span className="pet-blush right" />
+          <span className="pet-hearts" aria-hidden="true">
+            <i>♥</i>
+            <i>♥</i>
+            <i>♥</i>
+          </span>
         </button>
         <div className="pet-shadow" />
-        <div className="pet-info">
-          <strong>{petCopy.status}</strong>
-          <small>{petCopy.whisper}</small>
-          <p>{petNotice}</p>
-          <div className="pet-actions">
-            <button onClick={petTouch}>摸摸</button>
-            <button onClick={feedPet}>喂橙子糖</button>
-          </div>
+        <div className="pet-actions" aria-label="小冰人互动命令">
+          <button onClick={petTouch} aria-label="摸摸" title="摸摸">♡</button>
+          <button onClick={() => feedPet("candy")} aria-label="喂冰糖" title="喂冰糖">◆</button>
+          <button onClick={() => feedPet("fruit")} aria-label="喂水果" title="喂水果">🍎</button>
+          <button onClick={() => feedPet("meat")} aria-label="喂肉类" title="喂肉类">🍖</button>
+          <button onClick={() => feedPet("vegetable")} aria-label="喂蔬菜" title="喂蔬菜">🥦</button>
         </div>
+        <span className="sr-only" aria-live="polite">
+          {petReaction === "shy" ? "小冰人害羞地释放了爱心" : petReaction === "feed" ? "小冰人吃到食物，开心地跳起来、跑步，然后回来蹭蹭" : petCopy.status}
+        </span>
       </aside>
     </main>
   );

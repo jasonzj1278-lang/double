@@ -7,6 +7,7 @@ const petAuthorId = "little-ice-person";
 const autoReplyDelay = Number(process.env.AUTO_REPLY_DELAY_MS) || 30 * 60 * 1000;
 const fallbackPetReply =
   "小冰人来陪你坐一会儿。TA 也许正在忙，等 TA 回来就会看到你的话。";
+const petMentionPattern = /@\s*小冰人/;
 let petReplyTimer;
 const messages = [
   {
@@ -21,10 +22,10 @@ const messages = [
 
 loadLocalEnv();
 
-const qwenApiKey = process.env.DASHSCOPE_API_KEY;
-const qwenBaseUrl =
-  process.env.QWEN_BASE_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1";
+const qwenApiKey = readApiKey();
+const qwenBaseUrls = getQwenBaseUrls();
 const qwenModel = process.env.QWEN_MODEL || "qwen3.6-flash";
+const qwenTimeoutMs = Number(process.env.QWEN_TIMEOUT_MS) || 15000;
 
 function loadLocalEnv() {
   for (const filename of [".env.local", ".env"]) {
@@ -43,6 +44,35 @@ function loadLocalEnv() {
       }
     }
   }
+}
+
+function readApiKey() {
+  if (process.env.DASHSCOPE_API_KEY) return process.env.DASHSCOPE_API_KEY.trim();
+
+  const keyFile =
+    process.env.DASHSCOPE_API_KEY_FILE ||
+    "/Users/maoyumizhang/Downloads/qwen_3.6_flash_api_key.txt";
+
+  try {
+    return readFileSync(keyFile, "utf8").trim();
+  } catch {
+    return "";
+  }
+}
+
+function getQwenBaseUrls() {
+  const configured = process.env.QWEN_BASE_URLS || process.env.QWEN_BASE_URL;
+  if (configured) {
+    return configured
+      .split(",")
+      .map((url) => url.trim())
+      .filter(Boolean);
+  }
+
+  return [
+    "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "https://dashscope-us.aliyuncs.com/compatible-mode/v1",
+  ];
 }
 
 function sendJson(res, status, body) {
@@ -83,35 +113,68 @@ function getConversationHistory() {
     }));
 }
 
-async function createPetReply() {
+function normalizePetReply(reply, maxLength) {
+  const clean = String(reply || "")
+    .replace(/<think>[\s\S]*?<\/think>/gi, "")
+    .trim();
+  const chars = Array.from(clean || fallbackPetReply);
+  return chars.length > maxLength ? `${chars.slice(0, maxLength).join("")}...` : chars.join("");
+}
+
+async function createPetReply(mode = "comfort") {
   if (!qwenApiKey) return fallbackPetReply;
 
-  const response = await fetch(`${qwenBaseUrl}/chat/completions`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${qwenApiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: qwenModel,
-      messages: [
-        {
-          role: "system",
-          content:
-            "你是双人私密聊天室里的“小冰人”。你需要参考两位用户从开始到现在的所有对话，再判断此刻该如何陪伴。当其中一个人发消息后对方暂时没有回复，你要用温柔、克制、简短的中文陪伴一下。不要假装是对方本人，不要承诺现实行动，最多 40 个字。",
-        },
-        ...getConversationHistory(),
-      ],
-      temperature: 0.8,
-    }),
-  });
-
-  if (!response.ok) {
-    throw new Error(`Qwen request failed with ${response.status}`);
+  let lastError;
+  for (const baseUrl of qwenBaseUrls) {
+    try {
+      const reply = await requestPetReply(baseUrl, mode);
+      return normalizePetReply(reply, mode === "mention" ? 80 : 40);
+    } catch (error) {
+      lastError = error;
+    }
   }
 
-  const completion = await response.json();
-  return completion.choices?.[0]?.message?.content?.trim() || fallbackPetReply;
+  throw lastError || new Error("Qwen request failed");
+}
+
+async function requestPetReply(baseUrl, mode) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), qwenTimeoutMs);
+  const systemPrompt =
+    mode === "mention"
+      ? "你是双人私密聊天室里的“小冰人”，一个温柔、有点害羞的橙子小宠物。用户在聊天里 @ 你时，你要直接回应他们，可以接话、安慰、撒娇或轻轻调停气氛。不要假装是对方本人，不要承诺现实行动，中文回复最多 80 个字。"
+      : "你是双人私密聊天室里的“小冰人”。你需要参考两位用户从开始到现在的所有对话，再判断此刻该如何陪伴。当其中一个人发消息后对方暂时没有回复，你要用温柔、克制、简短的中文陪伴一下。不要假装是对方本人，不要承诺现实行动，最多 40 个字。";
+
+  try {
+    const response = await fetch(`${baseUrl}/chat/completions`, {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        Authorization: `Bearer ${qwenApiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: qwenModel,
+        messages: [
+          {
+            role: "system",
+            content: systemPrompt,
+          },
+          ...getConversationHistory(),
+        ],
+        temperature: 0.8,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Qwen request failed with ${response.status}`);
+    }
+
+    const completion = await response.json();
+    return completion.choices?.[0]?.message?.content?.trim() || fallbackPetReply;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function pushPetReply(body) {
@@ -124,6 +187,19 @@ function pushPetReply(body) {
     time: formatTime(),
   });
   broadcast();
+}
+
+async function replyToPetMention(message) {
+  clearTimeout(petReplyTimer);
+  const latestMessage = messages.at(-1);
+  if (latestMessage?.id !== message.id) return;
+
+  try {
+    pushPetReply(await createPetReply("mention"));
+  } catch (error) {
+    console.warn(`Qwen mention reply failed: ${error.message}`);
+    pushPetReply(fallbackPetReply);
+  }
 }
 
 function schedulePetReply(message) {
@@ -191,7 +267,12 @@ const server = http.createServer(async (req, res) => {
       });
 
       broadcast();
-      schedulePetReply(messages.at(-1));
+      const nextMessage = messages.at(-1);
+      if (petMentionPattern.test(body)) {
+        replyToPetMention(nextMessage);
+      } else {
+        schedulePetReply(nextMessage);
+      }
       return sendJson(res, 201, { ok: true });
     } catch {
       return sendJson(res, 400, { error: "Invalid message" });
