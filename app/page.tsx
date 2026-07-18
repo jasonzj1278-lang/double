@@ -1,11 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type Message = {
   id: number;
-  from: "me" | "you";
-  kind: "text" | "voice";
+  authorId: string;
+  authorName: string;
+  kind: "text" | "voice" | "pet";
   body: string;
   time: string;
   length?: string;
@@ -14,80 +15,102 @@ type Message = {
 const firstMessages: Message[] = [
   {
     id: 1,
-    from: "you",
+    authorId: "room",
+    authorName: "房间",
     kind: "text",
-    body: "我刚刚进来了，这里真的只有我们两个。",
+    body: "欢迎回来。局域网模式已打开，同一个 Wi-Fi 下的两个人会看到同一段对话。",
     time: "21:08",
   },
-  {
-    id: 2,
-    from: "me",
-    kind: "voice",
-    body: "今天想听你慢慢讲。",
-    time: "21:10",
-    length: "0:18",
-  },
-  {
-    id: 3,
-    from: "you",
-    kind: "text",
-    body: "那我们把这里当成一个小房间吧。",
-    time: "21:12",
-  },
 ];
+
+function getClientId() {
+  if (typeof window === "undefined") return "server";
+  const existing = window.localStorage.getItem("only-us-client-id");
+  if (existing) return existing;
+  const created =
+    typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `person-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  window.localStorage.setItem("only-us-client-id", created);
+  return created;
+}
+
+function getApiBase() {
+  return "/api";
+}
 
 export default function Home() {
   const [messages, setMessages] = useState<Message[]>(firstMessages);
   const [draft, setDraft] = useState("");
+  const [connected, setConnected] = useState(false);
+  const [sendError, setSendError] = useState("");
   const [callState, setCallState] = useState<"idle" | "ringing" | "live">(
     "idle",
   );
   const [muted, setMuted] = useState(false);
   const [cameraOff, setCameraOff] = useState(false);
+  const clientId = useRef("");
+
+  useEffect(() => {
+    clientId.current = getClientId();
+    const events = new EventSource(`${getApiBase()}/events`);
+
+    events.onopen = () => setConnected(true);
+    events.onerror = () => setConnected(false);
+    events.onmessage = (event) => {
+      const nextMessages = JSON.parse(event.data) as Message[];
+      setMessages(nextMessages);
+    };
+
+    return () => events.close();
+  }, []);
 
   const statusText = useMemo(() => {
     if (callState === "live") return "视频通话中";
     if (callState === "ringing") return "正在等待对方接听";
-    return "今晚在线";
-  }, [callState]);
+    return connected ? "局域网已连接" : "等待局域网连接";
+  }, [callState, connected]);
 
-  function sendMessage() {
+  async function postMessage(message: Omit<Message, "id" | "time">) {
+    const response = await fetch(`${getApiBase()}/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(message),
+    });
+    if (!response.ok) throw new Error("消息未能送达");
+  }
+
+  async function sendMessage() {
     const clean = draft.trim();
     if (!clean) return;
 
-    setMessages((current) => [
-      ...current,
-      {
-        id: Date.now(),
-        from: "me",
+    try {
+      setSendError("");
+      await postMessage({
+        authorId: clientId.current,
+        authorName: "我",
         kind: "text",
         body: clean,
-        time: new Intl.DateTimeFormat("zh-CN", {
-          hour: "2-digit",
-          minute: "2-digit",
-          hour12: false,
-        }).format(new Date()),
-      },
-    ]);
-    setDraft("");
+      });
+      setDraft("");
+    } catch {
+      setSendError("消息没有送达，请确认两人都打开局域网链接。");
+    }
   }
 
-  function addVoiceNote() {
-    setMessages((current) => [
-      ...current,
-      {
-        id: Date.now(),
-        from: "me",
+  async function addVoiceNote() {
+    try {
+      setSendError("");
+      await postMessage({
+        authorId: clientId.current,
+        authorName: "我",
         kind: "voice",
         body: "新的语音消息",
-        time: new Intl.DateTimeFormat("zh-CN", {
-          hour: "2-digit",
-          minute: "2-digit",
-          hour12: false,
-        }).format(new Date()),
         length: "0:12",
-      },
-    ]);
+      });
+    } catch {
+      setSendError("语音没有送达，请确认两人都打开局域网链接。");
+    }
   }
 
   return (
@@ -186,9 +209,16 @@ export default function Home() {
           <div className="messages" aria-live="polite">
             {messages.map((message) => (
               <article
-                className={`message ${message.from === "me" ? "from-me" : "from-you"}`}
+                className={`message ${
+                  message.authorId === "little-ice-person"
+                    ? "from-pet"
+                    : message.authorId === clientId.current
+                      ? "from-me"
+                      : "from-you"
+                }`}
                 key={message.id}
               >
+                {message.kind === "pet" && <small className="pet-name">小冰人</small>}
                 {message.kind === "voice" ? (
                   <div className="voice-message">
                     <button aria-label="播放语音">▶</button>
@@ -226,6 +256,7 @@ export default function Home() {
               发送
             </button>
           </div>
+          {sendError && <p className="send-error" role="alert">{sendError}</p>}
         </div>
       </section>
     </main>

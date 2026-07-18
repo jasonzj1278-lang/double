@@ -371,6 +371,21 @@ time {
   color: rgba(255, 253, 248, 0.66);
 }
 
+.from-pet {
+  align-self: flex-start;
+  border: 1px solid rgba(109, 167, 150, 0.48);
+  background: #e7f3ec;
+  color: #244c3d;
+}
+
+.pet-name {
+  display: block;
+  margin-bottom: 4px;
+  color: #3b7963;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .voice-message {
   gap: 10px;
   min-width: 190px;
@@ -425,6 +440,12 @@ time {
   gap: 10px;
   padding: 14px;
   border-top: 1px solid var(--line);
+}
+
+.send-error {
+  margin: 0 20px 18px;
+  color: #b42318;
+  font-size: 13px;
 }
 
 .composer input {
